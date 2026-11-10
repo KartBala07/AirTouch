@@ -16,5 +16,9 @@ double-click. Cursor speed and tap sensitivity are in Settings.
 Absolute (touchscreen-like) mode maps where you point onto the screen, but needs
 a 9-ring calibration and works best with your hand close to the glass.
 
+Updates: the menu has "Check for Updates"; it downloads the newest release, swaps
+the app in place and reopens it. macOS may ask for Camera access again after an
+update (the builds are ad-hoc signed, so each release looks like a new app).
+
 Apple Silicon only. Camera frames never leave the machine.
 Log: ~/Library/Application Support/AirTouch/airtouch.log

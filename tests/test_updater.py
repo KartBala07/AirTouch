@@ -38,7 +38,7 @@ script = updater.swap_script(Path("/Applications/AirTouch.app"), Path("/tmp/new/
 check("swap waits for the pid", "kill -0 4242" in script)
 check("swap replaces the target", 'rm -rf "/Applications/AirTouch.app"' in script)
 check("swap copies the staged app", 'ditto "/tmp/new/AirTouch.app"' in script)
-check("swap relaunches", 'open "/Applications/AirTouch.app"' in script)
+check("swap relaunches", 'open -n "/Applications/AirTouch.app"' in script)
 check("swap clears quarantine", "com.apple.quarantine" in script)
 
 # ---------------------------------------------------------------- archive

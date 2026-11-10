@@ -147,7 +147,8 @@ done
 rm -rf "{target}"
 ditto "{staged}" "{target}" || exit 1
 xattr -dr com.apple.quarantine "{target}" 2>/dev/null
-open "{target}"
+sleep 1
+open -n "{target}"
 """
 
 

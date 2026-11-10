@@ -168,15 +168,25 @@ launch, switchable in Settings):
 * **Source checkout** - the same menu item becomes *Pull latest from GitHub* and runs
   `git pull --ff-only`; restart to apply.
 
-Releasing a new version: bump `airtouch/version.py`, commit, then
+Releasing a new version:
 
 ```bash
-git tag v0.4.1 && git push origin v0.4.1
+# 1. bump airtouch/version.py
+./release.sh                       # builds, creates the GitHub release, uploads zip+dmg
+# 2. commit the bump
+git commit -am "0.4.3" && git push
 ```
 
-GitHub Actions (`.github/workflows/release.yml`) runs the headless tests, builds the
-app, and attaches `AirTouch.zip` + `AirTouch.dmg` to the release. Because both the
-in-app updater and the workflow read the same tag, releases and updates stay in sync.
+`release.sh` refuses to overwrite an existing tag, so the version file is the single
+switch. `ci/release.yml` is a ready-made GitHub Actions workflow that does the same
+build on a `v*` tag and attaches the assets - move it to `.github/workflows/` once the
+pushing token has the `workflow` scope (`gh auth refresh -s workflow`). The token used
+here only had `repo`, so releases are published from this machine for now.
+
+**After an update macOS may ask for Camera again.** The builds are ad-hoc signed, so
+every release has a new signature and TCC treats it as a new app. Allow Camera once
+and it sticks until the next update; Accessibility survives because it is keyed by
+bundle id.
 
 ## Build a shareable app + DMG
 

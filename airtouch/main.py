@@ -268,10 +268,24 @@ class Controller:
         try:
             import subprocess
 
-            subprocess.run(
-                ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"],
-                check=False,
+            from AppKit import NSAlert, NSApplication
+
+            app = NSApplication.sharedApplication()
+            app.setActivationPolicy_(0)
+            app.activateIgnoringOtherApps_(True)
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("AirTouch cannot use the camera")
+            alert.setInformativeText_(
+                "Grant Camera access to AirTouch in System Settings > Privacy & Security > "
+                "Camera, then reopen the app.\n\nAfter an update macOS asks again."
             )
+            alert.addButtonWithTitle_("Open Camera Settings")
+            alert.addButtonWithTitle_("Quit")
+            if alert.runModal() == 1000:
+                subprocess.run(
+                    ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"],
+                    check=False,
+                )
         except Exception:
             pass
 
@@ -876,10 +890,24 @@ def check(args) -> int:
         try:
             import subprocess
 
-            subprocess.run(
-                ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"],
-                check=False,
+            from AppKit import NSAlert, NSApplication
+
+            app = NSApplication.sharedApplication()
+            app.setActivationPolicy_(0)
+            app.activateIgnoringOtherApps_(True)
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("AirTouch cannot use the camera")
+            alert.setInformativeText_(
+                "Grant Camera access to AirTouch in System Settings > Privacy & Security > "
+                "Camera, then reopen the app.\n\nAfter an update macOS asks again."
             )
+            alert.addButtonWithTitle_("Open Camera Settings")
+            alert.addButtonWithTitle_("Quit")
+            if alert.runModal() == 1000:
+                subprocess.run(
+                    ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"],
+                    check=False,
+                )
         except Exception:
             pass
 
