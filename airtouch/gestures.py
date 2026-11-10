@@ -4,7 +4,7 @@ Postures come from ``core.classify_posture`` and are stabilised here, so a
 single noisy frame cannot trigger anything.
 
     point       cursor follows the finger, poke = click
-    pinch       quick = click, two quick = select, hold = right click / drag
+    pinch       quick = click, two quick = select, long hold = right click / drag
     fist        hold 0.4 s = screenshot to clipboard; opening the hand = paste
     two_finger  vertical swipe = scroll (up = scroll down)
     palm        horizontal swipe = switch window, swipe up = Mission Control
@@ -27,7 +27,7 @@ class Action:
 
 class GestureEngine:
     STABLE = 0.10        # a posture must hold this long before it takes over
-    HOLD_PINCH = 0.35    # pinch this long = right button down (drag/right click)
+    HOLD_PINCH = 0.75    # pinch this long = right button down (drag/right click)
     DOUBLE = 0.55        # two pinches inside this = double click
     FIST_HOLD = 0.40     # fist this long = screenshot
     PASTE_WINDOW = 12.0  # opening the hand within this pastes

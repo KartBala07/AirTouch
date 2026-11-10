@@ -50,7 +50,14 @@ plist_set CFBundleShortVersionString string "$VERSION"
 plist_set CFBundleVersion string "$VERSION"
 plist_set NSHumanReadableCopyright string "AirTouch beta - MIT licensed"
 
-codesign --force --deep --sign - "$APP"
+IDENTITY="AirTouch Signing (local)"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "AirTouch Signing"; then
+  echo "== signing with the stable local identity (keeps the Accessibility grant)"
+  codesign --force --deep --sign "$IDENTITY" "$APP"
+else
+  echo "== WARNING: no stable identity; falling back to ad-hoc (the grant resets each build)"
+  codesign --force --deep --sign - "$APP"
+fi
 
 echo "== 4/5  zip"
 rm -f dist/AirTouch.zip

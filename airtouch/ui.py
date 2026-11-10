@@ -600,6 +600,8 @@ class AppShell(NSObject):
 
         self.ax_item = menu_item(self, "Enable Accessibility\u2026", "enableAccessibility:", "")
         menu.addItem_(self.ax_item)
+        self.test_item = menu_item(self, "Test click", "testClick:", "")
+        menu.addItem_(self.test_item)
         self.pause_item = menu_item(self, "Pause tracking", "togglePause:", "p")
         menu.addItem_(self.pause_item)
         self.cursor_item = menu_item(self, "Show pointer ring", "toggleCursor:", "")
@@ -709,6 +711,10 @@ class AppShell(NSObject):
             ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"],
             check=False,
         )
+
+    def testClick_(self, sender=None):
+        self.controller.test_click()
+        self.refresh()
 
     def recalibrate_(self, sender=None):
         self.controller.start_calibration()
@@ -953,6 +959,10 @@ class AppShell(NSObject):
             else "Accessibility: off - clicks blocked"
         )
         self.ax_item.setHidden_(bool(st.accessibility))
+        if not st.accessibility:
+            self.acc_item.setTitle_("\u26a0 Clicking is OFF \u2014 enable Accessibility")
+        else:
+            self.acc_item.setTitle_("Clicks: on")
 
         for item, on in (
             (self.pause_item, st.paused),

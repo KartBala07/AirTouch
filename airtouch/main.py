@@ -236,6 +236,7 @@ class Controller:
         sw, sh = main_screen_size()
         self._screen = (int(sw), int(sh))
         self.state.accessibility = self.clicker.trusted()
+        self._ax_checked = 0.0
         if not self.state.accessibility and not self.config.get("ax_prompted"):
             self.config.set("ax_prompted", True)
             print("[airtouch] Accessibility is off - asking macOS to prompt")
@@ -518,10 +519,18 @@ class Controller:
             return
 
         if self.clicker.dry_run or not self.clicker.trusted():
-            self.state.last_event += " (not sent)"
+            self.state.last_event += " (blocked: Accessibility off)"
         else:
             self.clicker.click(sx, sy, double=double)
         print(f"[airtouch] {self.state.last_event} [{tap.kind}]")
+
+    def test_click(self) -> str:
+        """Move the cursor and read it back - proof that clicks reach macOS."""
+        ok, msg = self.actions_.click_test()
+        self.state.accessibility = self.clicker.trusted()
+        self.state.last_event = ("test click: " + msg)
+        print(f"[airtouch] test click: {msg}")
+        return msg
 
     # ------------------------------------------------------------------
     def _relative_step(self, frame, hand: Optional[Hand], taps, now: float) -> None:
@@ -918,6 +927,9 @@ class Controller:
         signal.signal(signal.SIGINT, _sigint)
         signal.signal(signal.SIGTERM, _sigint)
 
+        if not self.clicker.trusted() and not self.args.demo:
+            self._accessibility_alert()
+
         print("[airtouch] running. Ctrl+C here (or quit the terminal) to stop.")
         try:
             app.run()
@@ -1202,7 +1214,14 @@ def main(argv=None) -> int:
     p.add_argument("--self-update", action="store_true",
                    help="check GitHub for a newer release, install it and quit")
     p.add_argument("--shot", default=None, help="render UI to PNGs in this directory and exit")
+    p.add_argument("--test-click", action="store_true", help="verify that mouse events reach macOS, then exit")
     args = p.parse_args(argv)
+
+    if args.test_click:
+        ctl = Controller(args)
+        msg = ctl.test_click()
+        print(("PASS  " if "moved" in msg or "dry run" in msg else "FAIL  ") + msg)
+        return 0 if ("moved" in msg or "dry run" in msg) else 1
 
     if not (args.check or args.shot or args.demo):
         install_file_log()

@@ -60,7 +60,7 @@ check("two quick pinches = select",
 
 # ------------------------------------------------------------------ right drag
 eng = GestureEngine()
-acts, t = run(eng, "pinch", 0.0, 0.6, pinch=0.12)
+acts, t = run(eng, "pinch", 0.0, 1.0, pinch=0.12)
 check("held pinch presses the right button", "right_down" in kinds(acts), str(kinds(acts)))
 check("right-drag moves the pointer", eng.cursor_active)
 acts, t = run(eng, "point", t, 0.2)
