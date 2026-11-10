@@ -620,6 +620,7 @@ class AppShell(NSObject):
         state, msg, release = updater.check()
         self._update = {"state": state, "msg": msg, "release": release}
         self.config.set("last_update_check", time.time())
+        print(f"[airtouch] update check: {msg}")
 
     def _pull_worker(self):
         ok, msg = updater.git_update()
@@ -635,7 +636,9 @@ class AppShell(NSObject):
             self._check_worker()
             return
         self._update = {"state": "installing", "msg": f"installing {release.version}\u2026", "release": release}
+        print(f"[airtouch] updating to {release.version}")
         ok, msg = updater.install_release(release)
+        print(f"[airtouch] update: {msg}")
         self._update = {
             "state": "installing" if ok else "error",
             "msg": msg,

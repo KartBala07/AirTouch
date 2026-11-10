@@ -20,7 +20,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from . import core, paths
+from . import core, paths, updater
 from .config import Config
 from .core import (
     Calibration,
@@ -1025,6 +1025,19 @@ def install_file_log() -> None:
         pass
 
 
+def self_update() -> int:
+    """Headless update: check, download, stage, exit (the swap script finishes)."""
+    from .version import __version__
+
+    state, msg, release = updater.check()
+    print(f"[update] running {__version__}: {msg}")
+    if state != "available" or release is None:
+        return 0
+    ok, detail = updater.install_release(release)
+    print(f"[update] {detail}")
+    return 0 if ok else 1
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="airtouch", description=__doc__)
     p.add_argument("--calibrate", action="store_true", help="redo the 9-point calibration")
@@ -1042,6 +1055,8 @@ def main(argv=None) -> int:
     p.add_argument("--calib", default=None, help="calibration file path")
     p.add_argument("--settings", action="store_true", help="open the settings window on start")
     p.add_argument("--check", action="store_true", help="print diagnostics and exit")
+    p.add_argument("--self-update", action="store_true",
+                   help="check GitHub for a newer release, install it and quit")
     p.add_argument("--shot", default=None, help="render UI to PNGs in this directory and exit")
     args = p.parse_args(argv)
 
@@ -1052,6 +1067,8 @@ def main(argv=None) -> int:
         args.dry_run = True
         args.no_preview = False
 
+    if args.self_update:
+        return self_update()
     if args.check:
         return check(args)
     if args.shot:
