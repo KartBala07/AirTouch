@@ -1,4 +1,4 @@
-# AirTouch (beta 0.6)
+# AirTouch (beta 0.7)
 
 Turn the MacBook camera into a touchscreen: the app tracks your index fingertip and
 clicks wherever you point or poke. Tap twice quickly to select (double-click).
@@ -117,6 +117,32 @@ rather than silently mis-clicking.
 ./run.sh --mode relative        # force air-trackpad
 ./run.sh --mode absolute --calibrate
 ```
+
+## Scrolling is a flick, not a swipe
+
+Two fingers drag the content one-to-one - no threshold to hit, no cooldown, every
+frame of movement counts. Let go while still moving and the throw carries on and
+bleeds off (55% of your release velocity, decaying at 3.4/s), exactly like a
+trackpad. A slow drag stops dead when you stop; a flick glides. The old
+swipe-based version needed 16% of the frame of travel inside 0.6 s, so ordinary
+scrolling was ignored and fast scrolling overshot.
+
+## Custom gestures
+
+Menu -> **Custom gestures…** (⌘E). Bind any gesture the engine already recognises
+to a keystroke, an app, a URL or a shell command:
+
+| Trigger | Action | Value |
+| --- | --- | --- |
+| Double pinch | Keystroke | `cmd+shift+4` |
+| Fist held | Open app | `Screenshot` |
+| Palm swipe up | Shell command | `say hello` |
+
+Rules live in `~/Library/Application Support/AirTouch/gestures.json` and can be
+edited by hand; the window and the file are the same model. They run *in addition*
+to the built-in action, so a custom fist rule does not stop the screenshot -
+remove the built-in binding in the code if you want to replace it, or leave the
+rule switched off.
 
 ## Calibrating absolute mode (optional)
 

@@ -6,14 +6,16 @@ single noisy frame cannot trigger anything.
     point       cursor follows the finger, poke = click
     pinch       quick = click, two quick = select, long hold = right click / drag
     fist        hold 0.4 s = screenshot to clipboard; opening the hand = paste
-    two_finger  vertical swipe = scroll (up = scroll down)
+    two_finger  moves 1:1 like a trackpad; let go mid-move and it flicks
     palm        horizontal swipe = switch window, swipe up = Mission Control
 """
 
 from __future__ import annotations
 
+import math
+from collections import deque
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Deque, List, Optional, Tuple
 
 from .core import Hand
 
@@ -31,11 +33,17 @@ class GestureEngine:
     DOUBLE = 0.55        # two pinches inside this = double click
     FIST_HOLD = 0.40     # fist this long = screenshot
     PASTE_WINDOW = 12.0  # opening the hand within this pastes
-    SWIPE = 0.16         # normalised travel that counts as a swipe
+    SWIPE = 0.16         # normalised travel that counts as a palm swipe
     SWIPE_TIME = 0.60
     COOLDOWN = 0.90
-    SCROLL_STEP = 0.0035  # normalised travel per wheel emission
-    SCROLL_GAIN = 1400.0  # normalised travel -> wheel pixels
+
+    # scrolling is a flick, not a swipe: the fingers drag the content 1:1 and
+    # the gesture you make at the end of the move decides how far it glides
+    SCROLL_DEADBAND = 0.0012   # normalised tremor floor
+    SCROLL_GAIN = 2400.0       # normalised travel -> wheel pixels
+    FLICK_MIN = 0.30           # normalised/second that counts as a flick
+    FLICK_KEEP = 0.55          # how much of the throw keeps going
+    MOMENTUM_DECAY = 3.4       # 1/s exponential bleed-off
 
     def __init__(self) -> None:
         self.mode = "none"
@@ -52,7 +60,9 @@ class GestureEngine:
         self._palm_start: Optional[Tuple[float, float, float]] = None
         self._last_swipe = -1e9
         self._scroll_prev: Optional[float] = None
-        self._scroll_acc = 0.0
+        self._scroll_samples: Deque[Tuple[float, float]] = deque(maxlen=40)
+        self._mom = 0.0            # pixels still to glide, per second
+        self._mom_t = 0.0
 
     # ------------------------------------------------------------------
     @property
@@ -70,15 +80,18 @@ class GestureEngine:
         self._palm_start = None
         self._last_swipe = -1e9
         self._scroll_prev = None
-        self._scroll_acc = 0.0
+        self._scroll_samples.clear()
 
     # ------------------------------------------------------------------
     def update(self, hand: Optional[Hand], now: float,
                allow_input: bool = True, allow_gestures: bool = True) -> List[Action]:
         if hand is None or not allow_input:
+            out: List[Action] = []
             if self.mode != "none":
+                out.extend(self._leave(now))
                 self.reset()
-            return []
+            out.extend(self._momentum(now))
+            return out
 
         out: List[Action] = []
         raw = hand.posture or "none"
@@ -97,6 +110,7 @@ class GestureEngine:
             self._enter(raw, now)
 
         out.extend(self._tick(hand, now))
+        out.extend(self._momentum(now))
         return out
 
     # ------------------------------------------------------------------
@@ -106,7 +120,7 @@ class GestureEngine:
         self.right_active = False
         self._palm_start = None
         self._scroll_prev = None
-        self._scroll_acc = 0.0
+        self._scroll_samples.clear()
         if mode == "pinch":
             self._pinch_start = now
         elif mode == "fist":
@@ -116,6 +130,8 @@ class GestureEngine:
         out: List[Action] = []
         if self.mode == "pinch":
             out.extend(self._end_pinch(now))
+        elif self.mode == "two_finger":
+            out.extend(self._flick(now))
         elif self.mode == "fist":
             if self._paste_armed_at and (now - self._paste_armed_at) < self.PASTE_WINDOW:
                 self._paste_armed_at = 0.0
@@ -161,19 +177,57 @@ class GestureEngine:
 
     # ------------------------------------------------------------------
     def _scroll(self, hand: Hand, now: float) -> List[Action]:
+        """1:1 drag: every frame of movement scrolls, nothing is batched away."""
         y = hand.tip[1]
         if self._scroll_prev is None:
             self._scroll_prev = y
+            self._scroll_samples.clear()
+            self._scroll_samples.append((now, y))
             return []
         dy = y - self._scroll_prev
         self._scroll_prev = y
-        if abs(dy) < 0.0015:
+        self._scroll_samples.append((now, y))
+        while len(self._scroll_samples) > 2 and now - self._scroll_samples[0][0] > 0.12:
+            self._scroll_samples.popleft()
+        if abs(dy) < self.SCROLL_DEADBAND:
             return []
-        self._scroll_acc += dy
-        if abs(self._scroll_acc) < self.SCROLL_STEP:
+        return [Action("scroll", dy * self.SCROLL_GAIN)]
+
+    def _velocity(self) -> float:
+        """Normalised units per second over the last ~0.12 s."""
+        if len(self._scroll_samples) < 2:
+            return 0.0
+        t0, y0 = self._scroll_samples[0]
+        t1, y1 = self._scroll_samples[-1]
+        span = t1 - t0
+        if span <= 1e-4:
+            return 0.0
+        return (y1 - y0) / span
+
+    def _flick(self, now: float) -> List[Action]:
+        """Leaving scroll mode: keep the throw, then bleed it off."""
+        v = self._velocity()
+        if abs(v) >= self.FLICK_MIN:
+            self._mom = v * self.SCROLL_GAIN * self.FLICK_KEEP
+            self._mom_t = now
+        self._scroll_samples.clear()
+        return []
+
+    def _momentum(self, now: float) -> List[Action]:
+        if abs(self._mom) < 1.0:
+            self._mom = 0.0
+            self._mom_t = now
             return []
-        pixels = self._scroll_acc * self.SCROLL_GAIN
-        self._scroll_acc = 0.0
+        if not self._mom_t:
+            self._mom_t = now
+            return []
+        dt = now - self._mom_t
+        if dt <= 0:
+            return []
+        dt = min(dt, 0.10)
+        self._mom_t = now
+        pixels = self._mom * dt
+        self._mom *= math.exp(-self.MOMENTUM_DECAY * dt)
         return [Action("scroll", pixels)]
 
     def _swipe(self, hand: Hand, now: float) -> List[Action]:

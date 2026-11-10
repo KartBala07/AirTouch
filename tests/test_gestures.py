@@ -58,6 +58,33 @@ acts_rel2, t = run(eng, "point", t, 0.20)
 check("two quick pinches = select",
       kinds(acts2 + acts_rel2) == ["double_click"], str(kinds(acts2 + acts_rel2)))
 
+# ------------------------------------------------------------------ flick
+def flick(speed, frames=18):
+    eng = GestureEngine()
+    out, t = [], 0.0
+    for i in range(frames):
+        t += 1 / 30.0
+        y = 500 - i * speed
+        out += eng.update(Hand((640, y), (0.5, y / 720), 0.2, 0.9, True,
+                               np.zeros((21, 2), np.float32),
+                               posture="two_finger", wrist=(0.5, 0.9)), t)
+    drag = [a.value for a in out if a.kind == "scroll"]
+    glide = []
+    for _ in range(15):
+        t += 1 / 30.0
+        glide += [a.value for a in eng.update(None, t) if a.kind == "scroll"]
+    return drag, glide
+
+
+drag, glide = flick(25)
+check("fast flick drags 1:1", len(drag) >= 10, f"{len(drag)} events")
+check("fast flick keeps gliding after release", len(glide) >= 5, f"{len(glide)} events")
+check("glide fades out", abs(glide[0]) > abs(glide[-1]), f"{round(glide[0])} -> {round(glide[-1])}")
+
+slow_drag, slow_glide = flick(5)
+check("slow drag does not fling", len(slow_glide) == 0, f"{len(slow_glide)} events")
+check("slow drag still scrolls while held", len(slow_drag) >= 5, f"{len(slow_drag)} events")
+
 # ------------------------------------------------------------------ right drag
 eng = GestureEngine()
 acts, t = run(eng, "pinch", 0.0, 1.0, pinch=0.12)

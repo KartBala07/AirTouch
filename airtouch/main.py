@@ -163,6 +163,8 @@ class Controller:
         self.detector.PINCH_OFF = -1.0
         self.gate: Optional[MotionGate] = None if args.no_motion_gate else MotionGate()
         self.gestures = GestureEngine()
+        self._custom = None
+        self.gestures_editor = None
         self.actions_ = SystemActions(dry_run=args.dry_run)
         self.smoother = PointerFilter(
             min_cutoff=0.15 + 1.2 * float(self.config.get("smoothing")),
@@ -685,8 +687,49 @@ class Controller:
             self._process_tap(tap, frame, hand, now)
 
     # ------------------------------------------------------------------
+    @property
+    def custom_gestures(self):
+        """Loaded on first use so it can borrow the actions object."""
+        if self._custom is None:
+            from .custom import CustomGestures
+            from .paths import support_dir
+
+            self._custom = CustomGestures(
+                path=support_dir() / "gestures.json", actions=self.actions_
+            ).load()
+        return self._custom
+
+    # gesture name -> the trigger string custom rules are bound to
+    CUSTOM_TRIGGERS = {
+        "click": "pinch",
+        "double_click": "pinch_double",
+        "right_down": "pinch_hold",
+        "screenshot": "fist",
+        "mission_control": "palm_up",
+    }
+
+    def _fire_custom(self, action: Action) -> None:
+        trigger = self.CUSTOM_TRIGGERS.get(action.kind)
+        if action.kind == "switch_window":
+            trigger = "palm_right" if action.value > 0 else "palm_left"
+        if not trigger or not self.custom_gestures.rules:
+            return
+        for line in self.custom_gestures.fire(trigger):
+            print(f"[airtouch] custom: {line}")
+            self.state.last_event = line
+
+    def open_custom_gestures(self) -> None:
+        from .gestures_ui import open_editor
+
+        try:
+            open_editor(self)
+        except Exception as exc:
+            print(f"[airtouch] gesture editor failed: {exc}", file=sys.stderr)
+            self.state.last_event = f"gesture editor failed: {exc}"
+
     def _run_action(self, action: Action, frame, hand: Hand, now: float) -> None:
         kind = action.kind
+        self._fire_custom(action)
         cx, cy = self._cursor or (self._screen[0] / 2.0, self._screen[1] / 2.0)
 
         if kind == "click":

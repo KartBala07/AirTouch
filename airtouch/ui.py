@@ -615,6 +615,7 @@ class AppShell(NSObject):
         self.update_item = menu_item(self, "Check for Updates\u2026", "updateAction:", "")
         menu.addItem_(self.update_item)
         menu.addItem_(menu_item(self, "Settings\u2026", "openSettings:", ","))
+        menu.addItem_(menu_item(self, "Custom gestures\u2026", "customGestures:", "e"))
         menu.addItem_(menu_item(self, "Recalibrate\u2026", "recalibrate:", ""))
         menu.addItem_(NSMenuItem.separatorItem())
         menu.addItem_(menu_item(self, "Quit AirTouch", "quitApp:", "q"))
@@ -721,6 +722,9 @@ class AppShell(NSObject):
     def testClick_(self, sender=None):
         self.controller.test_click()
         self.refresh()
+
+    def customGestures_(self, sender=None):
+        self.controller.open_custom_gestures()
 
     def recalibrate_(self, sender=None):
         self.controller.start_calibration()

@@ -128,6 +128,10 @@ class SystemActions:
         q.CGEventPost(q.kCGHIDEventTap, q.CGEventCreateMouseEvent(None, q.kCGEventMouseMoved, before, 0))
         return False, "events dropped - Accessibility is off"
 
+    def key_chord(self, code: int, flags: int = 0) -> bool:
+        """Public chord helper for user-defined gestures."""
+        return self._key(code, flags)
+
     def scroll(self, pixels: float) -> bool:
         """Positive pixels scroll up (content down); negative scroll down."""
         if self.q is None:
