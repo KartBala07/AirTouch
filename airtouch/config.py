@@ -8,7 +8,10 @@ from typing import Any, Dict, Optional
 
 from . import paths
 
+CONFIG_VERSION = 2
+
 DEFAULTS: Dict[str, Any] = {
+    "config_version": 2,
     "mode": "auto",            # auto | relative | absolute
     "gain": 2.2,               # air-trackpad cursor speed
     "push_threshold": 1.050,   # hand-size growth that counts as a poke
@@ -19,10 +22,13 @@ DEFAULTS: Dict[str, Any] = {
     "click_on_single": True,   # False = only a double-tap clicks
     "dry_run": False,          # never post real mouse events
     "camera_index": 0,
-    "capture_width": 640,      # 640x480 is plenty for a 21-point hand model
-    "capture_height": 480,
+    "capture_width": 1280,     # 720p: sharper landmarks and a 16:9 preview
+    "capture_height": 720,
     "process_fps": 20.0,       # inference cap (frames above this are skipped)
     "show_cursor": True,       # pointer ring overlay
+    "smoothing": 0.30,         # pointer filter strength (lower = smoother)
+    "grid_cell": 8.0,          # pointer snaps to this pixel grid
+    "gestures": True,          # fist/palm/two-finger gestures
     "check_updates": True,     # look for a newer release at launch
     "last_update_check": 0.0,
     "require_pointing": True,  # ignore a hand that is closed / holding something
@@ -30,10 +36,12 @@ DEFAULTS: Dict[str, Any] = {
     "ax_prompted": False,      # we already asked for Accessibility once
 }
 
-NUMBERS = ("gain", "push_threshold", "pinch_threshold", "process_fps", "last_update_check")
+NUMBERS = ("gain", "push_threshold", "pinch_threshold", "process_fps", "last_update_check",
+           "smoothing", "grid_cell")
 INTS = ("camera_index", "capture_width", "capture_height")
 BOOLS = ("motion_gate", "show_preview", "show_hud", "show_cursor", "click_on_single",
-         "dry_run", "require_pointing", "overlays_collapsed", "ax_prompted", "check_updates")
+         "dry_run", "require_pointing", "overlays_collapsed", "ax_prompted", "check_updates",
+         "gestures")
 
 
 class Config:
@@ -50,6 +58,7 @@ class Config:
             return self
         if not isinstance(raw, dict):
             return self
+        version = int(raw.get("config_version") or 1)
         for key, default in DEFAULTS.items():
             if key not in raw:
                 continue
@@ -65,6 +74,18 @@ class Config:
                     self.data[key] = str(value)
             except (TypeError, ValueError):
                 pass
+
+        if version < 2:
+            # 0.5.0 raised the capture to 720p and added grid smoothing; older
+            # config files would otherwise pin everyone to the blurry defaults.
+            self.data.update({
+                "capture_width": 1280,
+                "capture_height": 720,
+                "smoothing": 0.30,
+                "grid_cell": 8.0,
+                "config_version": CONFIG_VERSION,
+            })
+            self.save()
         return self
 
     def save(self) -> None:

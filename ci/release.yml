@@ -37,6 +37,7 @@ jobs:
         run: |
           python tests/test_math.py
           python tests/test_updater.py
+          python tests/test_gestures.py
 
       - name: Build .app, .zip and .dmg
         env:

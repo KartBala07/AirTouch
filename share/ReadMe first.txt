@@ -9,6 +9,11 @@ AirTouch 0.2 (beta)
    The menu bar item shows "Enable Accessibility..." while this is missing.
 5. The app lives in the menu bar (hand icon). Click it for Settings, Pause, Quit.
 
+Gestures: point = move, poke or quick pinch = click, two quick pinches = select,
+hold the pinch = right click/drag, fist (held) = screenshot to clipboard and opening
+the hand pastes it, two fingers slide = scroll, whole-hand swipe = switch windows,
+swipe up = Mission Control.
+
 Air-trackpad mode needs no calibration: move your index finger to move the
 cursor, poke forward (or pinch thumb+index) to click, poke twice quickly to
 double-click. Cursor speed and tap sensitivity are in Settings.

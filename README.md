@@ -1,4 +1,4 @@
-# AirTouch (beta 0.4)
+# AirTouch (beta 0.5)
 
 Turn the MacBook camera into a touchscreen: the app tracks your index fingertip and
 clicks wherever you point or poke. Tap twice quickly to select (double-click).
@@ -59,6 +59,33 @@ The settings panel changes everything live, no restart:
 Settings live in `~/Library/Application Support/AirTouch/config.json`; the log is
 `~/Library/Application Support/AirTouch/airtouch.log`; calibration is
 `~/Library/Application Support/AirTouch/calibration.json`.
+
+## Gestures
+
+| gesture | action |
+|---|---|
+| index finger up, move | move the pointer |
+| poke forward | click |
+| quick pinch (thumb + index) | click |
+| two quick pinches | select (double-click) |
+| hold the pinch 0.35 s, then move | right click / right drag |
+| fist, held 0.4 s | screenshot to the clipboard |
+| open the hand again (within 12 s) | paste the screenshot |
+| two fingers (index + middle) slide up / down | scroll down / up |
+| whole-hand swipe left / right | previous / next window |
+| whole-hand swipe up | Mission Control |
+
+The pointer only follows the hand while you are **pointing**. Scroll, fist and swipe
+postures freeze it, so gesturing never drags the cursor across the screen. Every
+posture has to hold for 100 ms before it takes over, so a single noisy frame cannot
+fire a screenshot or a swipe.
+
+## Smoothing and the grid
+
+Camera tracking is jittery, so the pointer goes through two stages: an exponential
+filter (Settings → **Smoothing**, default 0.30) and then a snap to an **8 px grid**
+with a hysteresis band, so the cursor moves in a few clean steps instead of vibrating
+one pixel at a time. `grid_cell` in `config.json` sets the step size.
 
 ## Two control modes
 
@@ -271,3 +298,6 @@ cursor mapping and taps possible.
 | clicks land away from the ring | redo `./run.sh --calibrate`, keep the same hand distance |
 | taps fire while hovering | hold the hand still, or redo calibration further from the camera |
 | double-click never triggers | two taps must be within 0.6 s and 8 cm |
+| fist screenshot pastes a blank/desktop-only image | macOS needs **Screen Recording** for AirTouch: System Settings > Privacy & Security > Screen Recording |
+| right click fires while just pinching | hold the pinch a touch longer; it only becomes a right click after 0.35 s |
+| swipes fire too easily | they need 16 % of the frame of travel inside 0.6 s, and there is a 0.9 s cooldown |

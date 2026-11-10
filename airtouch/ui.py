@@ -27,6 +27,7 @@ from AppKit import (
     NSForegroundColorAttributeName,
     NSGraphicsContext,
     NSImage,
+    NSImageInterpolationHigh,
     NSImageInterpolationLow,
     NSMakeRect,
     NSMakeSize,
@@ -314,13 +315,18 @@ class CalibrationView(BaseView):
         # camera thumbnail (only exists while calibrating)
         rgb = getattr(self.state, "preview_rgb", None)
         if rgb is not None:
-            pw, ph = 320, 180
-            px, py = w - pw - 28, h - ph - 28
             img = image_from_rgb(rgb)
             if img is not None:
+                # keep the camera's aspect ratio instead of stretching the frame
+                iw, ih = float(rgb.shape[1]), float(rgb.shape[0])
+                pw = 360.0
+                ph = pw * ih / max(iw, 1.0)
+                px, py = w - pw - 28, h - ph - 28
                 rounded_rect(px - 6, py - 6, pw + 12, ph + 12, 10,
                              fill=color(0, 0, 0, 0.55), stroke=color(1, 1, 1, 0.14))
-                NSGraphicsContext.currentContext().setImageInterpolation_(NSImageInterpolationLow)
+                NSGraphicsContext.currentContext().setImageInterpolation_(
+                    NSImageInterpolationHigh
+                )
                 img.drawInRect_(NSMakeRect(px, py, pw, ph))
                 for nx, ny in getattr(self.state, "calib_map", []):
                     mx, my = px + nx * pw, py + ny * ph
@@ -712,10 +718,10 @@ class AppShell(NSObject):
         self._value_labels["sens"].setStringValue_(f"{(threshold - 1) * 100:.1f}% push")
         self.controller.apply_settings()
 
-    def pinchChanged_(self, sender):
+    def smoothingChanged_(self, sender):
         value = round(float(sender.doubleValue()), 3)
-        self.config.set("pinch_threshold", value)
-        self._value_labels["pinch"].setStringValue_(f"{value:.2f} ratio")
+        self.config.set("smoothing", value)
+        self._value_labels["smoothing"].setStringValue_(f"{value:.2f}")
         self.controller.apply_settings()
 
     def optionChanged_(self, sender):
@@ -783,18 +789,20 @@ class AppShell(NSObject):
         view.addSubview_(_label("left = easier to trigger", 170, y + 20, 190, 11, secondary=True))
         y += 44
 
-        view.addSubview_(_label("Pinch threshold", 24, y + 3, 130, 13))
+        view.addSubview_(_label("Smoothing", 24, y + 3, 130, 13))
         slider = NSSlider.alloc().initWithFrame_(NSMakeRect(170, y - 3, 190, 24))
-        slider.setMinValue_(0.15)
-        slider.setMaxValue_(0.55)
+        slider.setMinValue_(0.10)
+        slider.setMaxValue_(0.60)
         slider.setContinuous_(True)
         slider.setTarget_(self)
-        slider.setAction_("pinchChanged:")
+        slider.setAction_("smoothingChanged:")
         view.addSubview_(slider)
-        self._sliders["pinch"] = slider
-        self._value_labels["pinch"] = _label("0.34 ratio", 366, y + 3, 90, 12, secondary=True)
-        view.addSubview_(self._value_labels["pinch"])
-        y += 40
+        self._sliders["smoothing"] = slider
+        self._value_labels["smoothing"] = _label("0.30", 366, y + 3, 90, 12, secondary=True)
+        view.addSubview_(self._value_labels["smoothing"])
+        view.addSubview_(_label("left = steadier, right = snappier", 170, y + 20, 240, 11,
+                                secondary=True))
+        y += 44
 
         view.addSubview_(_label("Behaviour", 24, y, 200, size=10.5, secondary=True))
         y += 20
@@ -883,10 +891,10 @@ class AppShell(NSObject):
             thr = float(cfg.get("push_threshold"))
             self._sliders["sens"].setDoubleValue_(thr)
             self._value_labels["sens"].setStringValue_(f"{(thr - 1) * 100:.1f}% push")
-        if "pinch" in self._sliders:
-            val = float(cfg.get("pinch_threshold"))
-            self._sliders["pinch"].setDoubleValue_(val)
-            self._value_labels["pinch"].setStringValue_(f"{val:.2f} ratio")
+        if "smoothing" in self._sliders:
+            val = float(cfg.get("smoothing"))
+            self._sliders["smoothing"].setDoubleValue_(val)
+            self._value_labels["smoothing"].setStringValue_(f"{val:.2f}")
         for key, _title in OPTION_ROWS:
             box = self._value_labels.get("opt_" + key)
             if box is not None:
@@ -904,9 +912,13 @@ class AppShell(NSObject):
         self._refresh_update_item()
 
         hand = "yes" if st.hand else "no"
-        pointing = "pointing" if st.pointing else ("not pointing" if st.hand else "-")
+        posture = getattr(st, "posture", "none")
+        if posture in ("none", "") and st.hand:
+            posture = "pointing" if st.pointing else "idle"
+        if st.right_drag:
+            posture += " · right-drag"
         self.hand_item.setTitle_(
-            f"Hand: {hand} ({pointing})   cam {st.cam_fps:.0f} / track {st.det_fps:.0f} fps"
+            f"Hand: {hand} ({posture})   cam {st.cam_fps:.0f} / track {st.det_fps:.0f} fps"
         )
         self.counts_item.setTitle_(
             f"Taps {st.taps}   Clicks {st.clicks}   Double {st.doubles}"

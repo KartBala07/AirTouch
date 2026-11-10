@@ -21,7 +21,10 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from . import core, paths, updater
+from .actions import SystemActions
 from .config import Config
+from .gestures import Action, GestureEngine
+from .smooth import GridSmoother
 from .core import (
     Calibration,
     Camera,
@@ -81,6 +84,8 @@ class State:
         self.gain = 2.2
         self.click_single = True
         self.pointing = False
+        self.posture = "none"
+        self.right_drag = False
         self.overlays_collapsed = False
         self.paused = False
         self.quit = False
@@ -146,7 +151,18 @@ class Controller:
         self.clicker = Clicker(dry_run=args.dry_run)
         self.calib: Optional[Calibration] = None
         self.detector = TapDetector()
+        # pinch is owned by the gesture engine (click/select/right-drag), so the
+        # detector must not also fire a click on the same pinch
+        self.detector.PINCH_ON = -1.0
+        self.detector.PINCH_OFF = -1.0
         self.gate: Optional[MotionGate] = None if args.no_motion_gate else MotionGate()
+        self.gestures = GestureEngine()
+        self.actions_ = SystemActions(dry_run=args.dry_run)
+        self.smoother = GridSmoother(
+            alpha=float(self.config.get("smoothing")),
+            cell=float(self.config.get("grid_cell")),
+        )
+        self._right_down = False
         self._last_hand_t = 0.0
         self._last_track_t = 0.0
         self.grid = calibration_grid(CALIB_INSET)
@@ -182,7 +198,6 @@ class Controller:
         st.gain = float(cfg.get("gain"))
         if self.detector is not None:
             self.detector.PUSH_ON = float(cfg.get("push_threshold"))
-            self.detector.PINCH_ON = float(cfg.get("pinch_threshold"))
         st.click_single = bool(cfg.get("click_on_single"))
         st.show_cursor = bool(cfg.get("show_cursor"))
         self.clicker.dry_run = bool(cfg.get("dry_run")) or self.args.dry_run
@@ -537,12 +552,34 @@ class Controller:
         cx = min(max(cx + dx * self._screen[0] * self.gain, 0.0), self._screen[0] - 1)
         cy = min(max(cy + dy * self._screen[1] * self.gain, 0.0), self._screen[1] - 1)
         self._cursor = (cx, cy)
-        self.state.tip_screen = (cx, cy)
+        sx, sy = self.smoother.update(cx, cy)
+        self.state.tip_screen = (sx, sy)
+        if self._right_down:
+            self.actions_.right_drag(sx, sy)
 
         for tap in taps:
             self._process_tap(tap, frame, hand, now)
 
     def _live_step(self, frame, hand: Optional[Hand], taps, now: float) -> None:
+        if hand is None or self.state.paused:
+            self.gestures.reset()
+            self.state.posture = "none"
+            self.state.right_drag = False
+            self._last_tip_norm = None
+            self.state.tip_screen = None
+            self.state.zone = None
+            return
+
+        for action in self.gestures.update(hand, now):
+            self._run_action(action, frame, hand, now)
+        self.state.posture = self.gestures.mode
+        self.state.right_drag = self.gestures.right_active
+
+        # scroll / screenshot / swipe modes freeze the pointer
+        if not self.gestures.cursor_active:
+            self._last_tip_norm = hand.tip
+            return
+
         if self.state.control == "relative":
             self._relative_step(frame, hand, taps, now)
             return
@@ -565,18 +602,65 @@ class Controller:
         sx = min(max(sx, 0.0), self._screen[0] - 1)
         sy = min(max(sy, 0.0), self._screen[1] - 1)
 
-        if self._smooth is None or math.hypot(sx - self._smooth[0], sy - self._smooth[1]) > 220:
+        if self._smooth is None or math.hypot(sx - self._smooth[0], sy - self._smooth[1]) > 260:
             self._smooth = (sx, sy)
-        else:
-            a = 0.45
-            self._smooth = (
-                a * sx + (1 - a) * self._smooth[0],
-                a * sy + (1 - a) * self._smooth[1],
-            )
+            self.smoother.reset()
+        px_, py_ = self.smoother.update(sx, sy)
+        self._smooth = (px_, py_)
         self.state.tip_screen = self._smooth
+        if self._right_down:
+            self.actions_.right_drag(px_, py_)
 
         for tap in taps:
             self._process_tap(tap, frame, hand, now)
+
+    # ------------------------------------------------------------------
+    def _run_action(self, action: Action, frame, hand: Hand, now: float) -> None:
+        kind = action.kind
+        cx, cy = self._cursor or (self._screen[0] / 2.0, self._screen[1] / 2.0)
+
+        if kind == "click":
+            self._tap_at(cx, cy, now, type("T", (), {"kind": "pinch"})())
+        elif kind == "double_click":
+            self.state.taps += 1
+            self.state.doubles += 1
+            self.state.flash_t = time.monotonic()
+            self.state.last_event = f"select (double) {int(cx)},{int(cy)}"
+            if not (self.clicker.dry_run or not self.clicker.trusted()):
+                self.clicker.click(cx, cy, double=True)
+            print(f"[airtouch] {self.state.last_event}")
+        elif kind == "right_down":
+            self._right_down = True
+            self.state.right_drag = True
+            self.state.last_event = "right button down"
+            self.actions_.right_down(cx, cy)
+            self.state.flash_t = time.monotonic()
+        elif kind == "right_up":
+            self._right_down = False
+            self.state.right_drag = False
+            self.actions_.right_up(cx, cy)
+            self.state.last_event = "right click"
+            print("[airtouch] right click")
+        elif kind == "scroll":
+            self.actions_.scroll(action.value)
+        elif kind == "screenshot":
+            ok = self.actions_.screenshot_to_clipboard()
+            self.state.last_event = "screenshot to clipboard" if ok else "screenshot failed"
+            self.state.flash_t = time.monotonic()
+            print(f"[airtouch] {self.state.last_event}")
+        elif kind == "paste":
+            self.actions_.paste()
+            self.state.last_event = "pasted screenshot"
+            self.state.flash_t = time.monotonic()
+            print("[airtouch] pasted screenshot")
+        elif kind == "switch_window":
+            self.actions_.switch_window(action.value)
+            self.state.last_event = "switched window"
+            print(f"[airtouch] switch window {'next' if action.value > 0 else 'previous'}")
+        elif kind == "mission_control":
+            self.actions_.mission_control()
+            self.state.last_event = "mission control"
+            print("[airtouch] mission control")
 
     # ------------------------------------------------------------------
     def _maybe_preview(self, frame, hand: Optional[Hand], now: float) -> None:
@@ -688,8 +772,11 @@ class Controller:
                     continue
                 self._seq = seq
 
-                # cap inference rate: past ~20 fps the extra frames buy nothing
-                if now - self._last_track_t < self._min_frame_gap:
+                # cap inference rate: past ~20 fps the extra frames buy nothing,
+                # and drop to 8 fps when no hand has been seen for a moment
+                recent = (now - self._last_hand_t) < 0.8
+                gap = self._min_frame_gap if recent else max(self._min_frame_gap, 1 / 8.0)
+                if now - self._last_track_t < gap:
                     time.sleep(0.003)
                     continue
 
@@ -1012,8 +1099,6 @@ def shot(args) -> int:
 
     # settings panel
     try:
-        from .config import Config
-
         class _FakeCtl:
             def __init__(self, st, cfg):
                 self.state = st

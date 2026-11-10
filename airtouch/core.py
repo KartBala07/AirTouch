@@ -157,21 +157,47 @@ class Hand:
     extended: int = 0                 # how many of index/middle/ring/pinky are out
     grip: bool = False                # thumb folded across the palm (holding something)
     pointing: bool = True             # index out, not a grip, not a flat palm
+    fingers: Tuple[bool, bool, bool, bool] = (True, False, False, False)
+    posture: str = "point"            # point | pinch | fist | palm | two_finger | none
 
 
-def classify_pose(pts: np.ndarray, size: float):
-    """Return (index_extended, extended_count, grip, pointing).
-
-    `size` is the wrist->middle-MCP hand length. A hand that is gripping
-    something (fist, cup, phone, pen) has the thumb folded near the index base
-    and/or the index curled, so it must not drive the cursor.
-    """
-    ext = [
+def finger_states(pts: np.ndarray) -> Tuple[bool, bool, bool, bool]:
+    """Which of index / middle / ring / pinky are extended."""
+    return tuple(  # type: ignore[return-value]
         bool(np.linalg.norm(pts[t] - pts[WRIST])
              > np.linalg.norm(pts[pp] - pts[WRIST]) * 1.05)
         for t, pp in ((INDEX_TIP, INDEX_PIP), (MIDDLE_TIP, MIDDLE_PIP),
                       (RING_TIP, 14), (PINKY_TIP, 18))
-    ]
+    )
+
+
+def classify_posture(ext: Tuple[bool, bool, bool, bool], pinch: float,
+                     grip: bool) -> str:
+    """Map finger state to one of: pinch, fist, palm, two_finger, point, none.
+
+    A pinch is the thumb tip touching the index tip while the thumb is *not*
+    folded across the palm - that is what separates it from a fist, whose thumb
+    lies over the curled fingers (grip) and whose fingers are all curled.
+    """
+    count = int(sum(ext))
+    if pinch <= 0.25 and not grip:
+        return "pinch"
+    if count == 0 and grip:
+        return "fist"
+    if count == 0:
+        return "none"
+    if count == 4:
+        return "palm"
+    if ext[0] and ext[1] and not ext[2] and not ext[3]:
+        return "two_finger"
+    if ext[0] and count <= 2:
+        return "point"
+    return "none"
+
+
+def classify_pose(pts: np.ndarray, size: float):
+    """Return (index_extended, extended_count, grip, pointing) plus details."""
+    ext = finger_states(pts)
     grip = bool(np.linalg.norm(pts[THUMB_TIP] - pts[INDEX_MCP]) / max(size, 1e-6) < 0.55)
     pointing = bool(ext[0] and not grip and not (ext[1] and ext[2] and ext[3]))
     return ext[0], int(sum(ext)), grip, pointing
@@ -216,6 +242,7 @@ class HandTracker:
         size = float(np.linalg.norm(pts[WRIST] - pts[MIDDLE_MCP])) or 1.0
         scale = size / h
         index_extended, extended, grip, pointing = classify_pose(pts, size)
+        fingers = finger_states(pts)
         pinch = float(np.linalg.norm(pts[THUMB_TIP] - pts[INDEX_TIP]) / size)
         tip = pts[INDEX_TIP]
         score = 0.0
@@ -235,6 +262,8 @@ class HandTracker:
             extended=extended,
             grip=grip,
             pointing=pointing,
+            fingers=fingers,
+            posture=classify_posture(fingers, pinch, grip),
         )
 
     def close(self) -> None:
