@@ -155,6 +155,10 @@ class SystemActions:
     def paste(self) -> None:
         self._key(KEY_V, CMD_FLAG)
 
+    # ctrl+cmd+shift+3: the system screenshot of every display, into the clipboard
+    def _system_screenshot(self) -> bool:
+        return bool(self._key(20, CTRL_FLAG | CMD_FLAG | SHIFT_FLAG))
+
     def screenshot_to_clipboard(self) -> bool:
         """Silent full-screen capture straight into the pasteboard."""
         if self.dry_run:
@@ -162,16 +166,17 @@ class SystemActions:
         from .core import screen_capture_allowed
 
         if not screen_capture_allowed():
-            # never shell out to screencapture here: that is what pops the
-            # Screen Recording dialog at you every time
+            # Do not shell out to screencapture: that is what raises the
+            # "wants to record this computer's screen" dialog. Ask macOS's own
+            # screenshot service instead - it holds the permission, not us, so
+            # the gesture works with no Screen Recording grant at all.
             if not self._screen_warned:
                 self._screen_warned = True
                 print(
-                    "[airtouch] screenshot skipped: Screen Recording is off.\n"
-                    "           Privacy & Security > Screen Recording > AirTouch, then Relaunch AirTouch.",
+                    "[airtouch] no Screen Recording grant - using macOS's own screenshot service",
                     file=sys.stderr,
                 )
-            return False
+            return self._system_screenshot()
         try:
             result = subprocess.run(
                 ["screencapture", "-x", "-c"],

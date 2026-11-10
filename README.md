@@ -127,6 +127,14 @@ trackpad. A slow drag stops dead when you stop; a flick glides. The old
 swipe-based version needed 16% of the frame of travel inside 0.6 s, so ordinary
 scrolling was ignored and fast scrolling overshot.
 
+### Screenshots without Screen Recording
+
+If AirTouch has no Screen Recording grant it does **not** call `screencapture`
+(that is what raised the "wants to record this computer's screen" dialog on
+every fist). It posts `ctrl+cmd+shift+3` instead, so macOS's own screenshot
+service takes the shot and puts it on the clipboard - our process never reads
+the screen, so no permission and no dialog.
+
 ## Custom gestures
 
 Menu -> **Custom gestures…** (⌘E). Bind any gesture the engine already recognises

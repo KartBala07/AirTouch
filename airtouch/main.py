@@ -1321,6 +1321,9 @@ def main(argv=None) -> int:
         for name, ok in rows:
             print(f"{'yes' if ok else 'NO ':>4}  {name}")
         print()
+        print("Note: a check run from a terminal borrows that terminal's permissions;")
+        print("the menu bar is the honest report for the app itself.")
+        print()
         print("If you just flipped a switch, macOS only applies it after a relaunch:")
         print("  menu bar icon -> Relaunch AirTouch")
         return 0
