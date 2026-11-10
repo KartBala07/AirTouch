@@ -23,6 +23,7 @@ class SystemActions:
         self.dry_run = dry_run
         self.last_posted = False
         self._warned = False
+        self._screen_warned = False
         try:
             import Quartz
 
@@ -154,6 +155,19 @@ class SystemActions:
         """Silent full-screen capture straight into the pasteboard."""
         if self.dry_run:
             return True
+        from .core import screen_capture_allowed
+
+        if not screen_capture_allowed():
+            # never shell out to screencapture here: that is what pops the
+            # Screen Recording dialog at you every time
+            if not self._screen_warned:
+                self._screen_warned = True
+                print(
+                    "[airtouch] screenshot skipped: Screen Recording is off.\n"
+                    "           Privacy & Security > Screen Recording > AirTouch, then Relaunch AirTouch.",
+                    file=sys.stderr,
+                )
+            return False
         try:
             result = subprocess.run(
                 ["screencapture", "-x", "-c"],

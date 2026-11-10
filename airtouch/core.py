@@ -44,6 +44,21 @@ HAND_CONNECTIONS = [
 # --------------------------------------------------------------------------
 # camera
 # --------------------------------------------------------------------------
+def screen_capture_allowed() -> bool:
+    """True when macOS will actually let us read the screen.
+
+    Asking first is the whole point: calling `screencapture` while the
+    permission is off is what raises that "would like to record this
+    computer's screen" dialog, over and over.
+    """
+    try:
+        import Quartz
+
+        return bool(Quartz.CGPreflightScreenCaptureAccess())
+    except Exception:
+        return False
+
+
 class Camera:
     """Threaded capture. Frames are mirrored so the view matches the user's
     own left/right (moving your finger right moves the cursor right)."""

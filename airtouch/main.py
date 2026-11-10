@@ -109,6 +109,7 @@ class State:
         self.cam_fps = 0.0
         self.det_fps = 0.0
         self.accessibility = False
+        self.screen_ok = True
         self.has_calib = False
         self.calib_rms = 0.0
 
@@ -550,6 +551,26 @@ class Controller:
                 )
         except Exception as exc:
             print(f"[airtouch] accessibility alert failed: {exc}")
+
+    def relaunch(self) -> None:
+        """Quit and start again - macOS only applies a fresh TCC grant on launch."""
+        import subprocess
+        import sys
+
+        target = sys.executable
+        bundle = None
+        if ".app/Contents/MacOS/" in target:
+            bundle = target.split("/Contents/MacOS/")[0]
+        if not bundle:
+            self.state.last_event = "relaunch: only works in the .app"
+            return
+        subprocess.Popen(
+            ["/bin/sh", "-c", f"sleep 1; /usr/bin/open -n '{bundle}'"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.state.last_event = "relaunching\u2026"
+        self.state.quit = True
 
     def test_click(self) -> str:
         """Move the cursor and read it back - proof that clicks reach macOS."""
@@ -1242,7 +1263,24 @@ def main(argv=None) -> int:
                    help="check GitHub for a newer release, install it and quit")
     p.add_argument("--shot", default=None, help="render UI to PNGs in this directory and exit")
     p.add_argument("--test-click", action="store_true", help="verify that mouse events reach macOS, then exit")
+    p.add_argument("--check-perms", action="store_true", help="report macOS permission state and exit")
     args = p.parse_args(argv)
+
+    if args.check_perms:
+        from .core import screen_capture_allowed
+        from .core import Clicker as _Clicker
+
+        c = _Clicker(dry_run=False)
+        rows = [
+            ("Accessibility (clicks)", c.trusted()),
+            ("Screen Recording (screenshot gesture)", screen_capture_allowed()),
+        ]
+        for name, ok in rows:
+            print(f"{'yes' if ok else 'NO ':>4}  {name}")
+        print()
+        print("If you just flipped a switch, macOS only applies it after a relaunch:")
+        print("  menu bar icon -> Relaunch AirTouch")
+        return 0
 
     if args.test_click:
         ctl = Controller(args)
