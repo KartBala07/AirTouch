@@ -15,7 +15,11 @@ PLIST="$APP/Contents/Info.plist"
 VERSION="$("$PY" -c 'from airtouch.version import __version__; print(__version__)')"
 
 echo "== 1/5  icon"
-"$PY" tools/make_icon.py
+if [ -f art/hand.png ]; then
+  "$PY" tools/icon_from_art.py art/hand.png light
+else
+  "$PY" tools/make_icon.py
+fi
 
 echo "== 2/5  PyInstaller (AirTouch $VERSION, this takes a few minutes)"
 "$PY" -m PyInstaller --noconfirm --clean --windowed --name AirTouch \
