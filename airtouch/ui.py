@@ -301,13 +301,23 @@ class CalibrationView(BaseView):
             fp.fill()
             draw_text("you", fx + 14, fy - 8, 60, 16, size=11, col=color(*WARN))
 
+        progress = float(getattr(self.state, "calib_progress", 0.0) or 0.0)
+        if progress > 0.01:
+            arc = NSBezierPath.bezierPath()
+            arc.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise_(
+                (tx, ty), 34.0, 90.0, 90.0 - 360.0 * progress, True
+            )
+            arc.setLineWidth_(5.0)
+            color(*GOOD, 0.92).set()
+            arc.stroke()
+
         draw_text(f"AirTouch calibration   {self.index + 1} / {self.total}", 0, 46, w, 34,
                   size=25, bold=True, align="center")
-        draw_text("Reach toward the screen, point at the ring, then poke forward",
+        draw_text("Hold your index fingertip on the ring until the circle fills",
                   0, 86, w, 24, size=15, align="center", col=color(1, 1, 1, 0.85))
         draw_text(self.hint, 0, h - 104, w, 26, size=13.5, align="center",
                   col=color(1, 1, 1, 0.78))
-        draw_text("push = tap   \u00b7   pinch = tap   \u00b7   N = mark   \u00b7   esc = quit",
+        draw_text("hold still 0.9 s = set   \u00b7   N = mark   \u00b7   esc = quit",
                   0, h - 70, w, 20, size=12, align="center", col=color(1, 1, 1, 0.52))
         if self.error:
             draw_text(self.error, 0, h - 40, w, 22, size=13, align="center", col=color(*BAD))
@@ -436,6 +446,7 @@ class Overlay(NSObject):
 
         if self.mode == "calibrate":
             self.calib_view.index = st.calib_index
+            self.calib_view.total = st.calib_total
             self.calib_view.target = st.calib_target
             self.calib_view.hint = st.calib_hint
             self.calib_view.done = st.calib_done
@@ -501,6 +512,7 @@ class Overlay(NSObject):
 # --------------------------------------------------------------------------
 OPTION_ROWS = [
     ("require_pointing", "Only respond to a pointing hand (ignore fists / holding things)"),
+    ("gestures", "Enable fist / palm / scroll gestures"),
     ("check_updates", "Check for updates at launch"),
     ("show_cursor", "Show pointer ring"),
     ("motion_gate", "Only track when something moves (saves CPU)"),
@@ -592,6 +604,8 @@ class AppShell(NSObject):
         menu.addItem_(self.pause_item)
         self.cursor_item = menu_item(self, "Show pointer ring", "toggleCursor:", "")
         menu.addItem_(self.cursor_item)
+        self.gestures_item = menu_item(self, "Gestures", "toggleGestures:", "g")
+        menu.addItem_(self.gestures_item)
         menu.addItem_(NSMenuItem.separatorItem())
         self.update_item = menu_item(self, "Check for Updates\u2026", "updateAction:", "")
         menu.addItem_(self.update_item)
@@ -668,6 +682,14 @@ class AppShell(NSObject):
     # -- actions --------------------------------------------------------
     def togglePause_(self, sender=None):
         self.state.paused = not self.state.paused
+        self.refresh()
+
+    def toggleGestures_(self, sender=None):
+        enabled = not bool(getattr(self.state, "gestures_enabled", True))
+        self.state.gestures_enabled = enabled
+        self.controller.gestures_enabled = enabled
+        self.config.set("gestures", enabled)
+        self._sync_controls()
         self.refresh()
 
     def toggleCursor_(self, sender=None):
@@ -848,7 +870,7 @@ class AppShell(NSObject):
 
     def show_settings(self):
         if self.settings_window is None:
-            width, height = 470, 470
+            width, height = 470, 520
             style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
             win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 NSMakeRect(0, 0, width, height), style, NSBackingStoreBuffered, False
@@ -917,6 +939,9 @@ class AppShell(NSObject):
             posture = "pointing" if st.pointing else "idle"
         if st.right_drag:
             posture += " · right-drag"
+        rejected = getattr(st, "rejected", "")
+        if rejected:
+            posture = f"ignored ({rejected})"
         self.hand_item.setTitle_(
             f"Hand: {hand} ({posture})   cam {st.cam_fps:.0f} / track {st.det_fps:.0f} fps"
         )
@@ -932,6 +957,7 @@ class AppShell(NSObject):
         for item, on in (
             (self.pause_item, st.paused),
             (self.cursor_item, getattr(st, "show_cursor", True)),
+            (self.gestures_item, getattr(st, "gestures_enabled", True)),
         ):
             item.setState_(NSControlStateValueOn if on else NSControlStateValueOff)
 

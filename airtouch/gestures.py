@@ -73,14 +73,19 @@ class GestureEngine:
         self._scroll_acc = 0.0
 
     # ------------------------------------------------------------------
-    def update(self, hand: Optional[Hand], now: float) -> List[Action]:
-        if hand is None:
+    def update(self, hand: Optional[Hand], now: float,
+               allow_input: bool = True, allow_gestures: bool = True) -> List[Action]:
+        if hand is None or not allow_input:
             if self.mode != "none":
                 self.reset()
             return []
 
         out: List[Action] = []
         raw = hand.posture or "none"
+        # big gestures can be switched off (or gated by hand position) without
+        # losing the pointer and the clicks
+        if not allow_gestures and raw in ("fist", "palm", "two_finger"):
+            raw = "none"
 
         if raw != self._raw:
             self._raw = raw

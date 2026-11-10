@@ -110,10 +110,10 @@ class Camera:
                 self.ts = now
                 self.seq += 1
                 self._stamps.append(now)
-                if len(self._stamps) > 1:
+                if len(self._stamps) >= 8:
                     span = self._stamps[-1] - self._stamps[0]
                     if span > 0:
-                        self.fps = (len(self._stamps) - 1) / span
+                        self.fps = min(120.0, (len(self._stamps) - 1) / span)
 
     # ------------------------------------------------------------------
     def read(self):
@@ -157,6 +157,7 @@ class Hand:
     extended: int = 0                 # how many of index/middle/ring/pinky are out
     grip: bool = False                # thumb folded across the palm (holding something)
     pointing: bool = True             # index out, not a grip, not a flat palm
+    wrist: Tuple[float, float] = (0.5, 0.75)   # normalized, for zone gating
     fingers: Tuple[bool, bool, bool, bool] = (True, False, False, False)
     posture: str = "point"            # point | pinch | fist | palm | two_finger | none
 
@@ -220,9 +221,9 @@ class HandTracker:
             base_options=BaseOptions(model_asset_path=str(path)),
             running_mode=RunningMode.VIDEO,
             num_hands=num_hands,
-            min_hand_detection_confidence=0.5,
-            min_hand_presence_confidence=0.5,
-            min_tracking_confidence=0.5,
+            min_hand_detection_confidence=0.65,
+            min_hand_presence_confidence=0.65,
+            min_tracking_confidence=0.60,
         )
         self._lm = HandLandmarker.create_from_options(opts)
         self._last_ts = 0.0
@@ -262,6 +263,7 @@ class HandTracker:
             extended=extended,
             grip=grip,
             pointing=pointing,
+            wrist=(float(pts[WRIST][0] / w), float(pts[WRIST][1] / h)),
             fingers=fingers,
             posture=classify_posture(fingers, pinch, grip),
         )
@@ -430,6 +432,20 @@ def calibration_grid(inset: float = 0.12) -> np.ndarray:
         for u in vals:
             pts.append((u, v))
     return np.asarray(pts, dtype=np.float32)
+
+
+def calibration_grid5(inset: float = 0.07) -> np.ndarray:
+    """Four corners then the centre - a homography plus a sanity point."""
+    return np.asarray(
+        [
+            (inset, inset),
+            (1.0 - inset, inset),
+            (1.0 - inset, 1.0 - inset),
+            (inset, 1.0 - inset),
+            (0.5, 0.5),
+        ],
+        dtype=np.float32,
+    )
 
 
 @dataclass

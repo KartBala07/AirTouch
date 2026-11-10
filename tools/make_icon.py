@@ -1,101 +1,117 @@
 #!/usr/bin/env python3
-"""Generate the AirTouch app icon (rounded dark tile + cyan tracking ring)."""
+"""Render the AirTouch app icon.
 
-import math
+A squircle tile with a graphite gradient and a precision reticle, drawn at 4x
+and downsampled so the curves stay clean at every size.
+"""
+
 import subprocess
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
+SS = 4
 S = 1024
-SS = 4  # supersampling factor
+N = 4.6  # superellipse exponent: Apple-ish squircle
 
 
-def rounded_mask(size, radius):
-    m = np.zeros((size, size), np.uint8)
-    r = int(radius)
-    cv2.rectangle(m, (0, r), (size - 1, size - r), 255, -1)
-    cv2.rectangle(m, (r, 0), (size - r, size - 1), 255, -1)
-    for cx, cy in ((r, r), (size - r, r), (r, size - r), (size - r, size - r)):
-        cv2.circle(m, (cx, cy), r, 255, -1)
-    return m
-
-
-def radial(size, cx, cy, radius, color, alpha=1.0):
+def squircle_mask(size, inset=0.17):
+    """Apple-style icon grid: the tile fills ~82% of the canvas."""
     yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
-    d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) / max(radius, 1)
-    a = np.clip(1.0 - d, 0.0, 1.0) ** 1.6 * alpha
-    layer = np.zeros((size, size, 4), np.float32)
-    layer[..., 0] = color[2]
-    layer[..., 1] = color[1]
-    layer[..., 2] = color[0]
-    layer[..., 3] = a * 255
-    return layer
+    c = (size - 1) / 2.0
+    half = c * (1.0 - inset)
+    u = np.abs((xx - c) / half)
+    v = np.abs((yy - c) / half)
+    d = np.power(u, N) + np.power(v, N)
+    return np.clip((1.0 - d) * 24.0, 0.0, 1.0) * 255.0
 
 
-def over(base, layer):
-    a = layer[..., 3:4] / 255.0
-    base[..., :3] = layer[..., :3] * a + base[..., :3] * (1 - a)
-    base[..., 3:4] = np.maximum(base[..., 3:4], layer[..., 3:4])
-    return base
+def alpha_over(dst, src_rgb, src_a):
+    a = (src_a / 255.0)[..., None]
+    dst[..., :3] = dst[..., :3] * (1 - a) + src_rgb * a
+    dst[..., 3] = np.maximum(dst[..., 3], src_a)
+    return dst
 
 
-def draw(size):
+def draw(size, small=False):
     canvas = np.zeros((size, size, 4), np.float32)
+    cx = cy = (size - 1) / 2.0
+    mask = squircle_mask(size)
 
-    # tile with vertical gradient
-    mask = rounded_mask(size, size * 0.225)
-    yy = np.linspace(0.0, 1.0, size, dtype=np.float32)[:, None]
-    top = np.array([30, 20, 12], np.float32)      # BGR
-    bot = np.array([58, 36, 18], np.float32)
-    grad = (top * (1 - yy) + bot * yy)[..., None, :]
-    grad = np.repeat(grad, size, axis=1)
-    tile = np.zeros((size, size, 4), np.float32)
-    tile[..., :3] = grad
-    tile[..., 3] = mask
-    canvas = over(canvas, tile)
+    # tile: diagonal gradient + top-left sheen
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    t = np.clip((xx / size) * 0.55 + (yy / size) * 0.45, 0.0, 1.0)[..., None]
+    top = np.array([40, 30, 21], np.float32)     # BGR: graphite with a blue cast
+    bot = np.array([13, 10, 8], np.float32)
+    tile = (top * (1 - t) + bot * t) * np.ones((1, 1, 3), np.float32)
 
-    cx = cy = size / 2.0
+    sheen = np.clip(
+        1.0 - ((xx - size * 0.28) ** 2 + (yy - size * 0.10) ** 2) / (size * 0.72) ** 2,
+        0.0, 1.0,
+    ) ** 2
+    tile = tile + sheen[..., None] * np.array([30, 25, 20], np.float32)
 
-    # soft glow behind the ring
-    canvas = over(canvas, radial(size, cx, cy, size * 0.34, (255, 190, 60), 0.16))
+    # rim light: bright along the top edge, fading down the sides
+    kernel = np.ones((max(3, int(size * 0.007)),) * 2, np.uint8)
+    edge = cv2.erode((mask > 127).astype(np.uint8) * 255, kernel, iterations=1)
+    inner = np.clip(mask - edge, 0, 255) / 255.0
+    rim = (0.95 - 0.55 * (yy / size))[..., None] * np.array([120, 108, 94], np.float32)
+    tile = tile + inner[..., None] * rim
 
-    # outer tracking ring (cyan) with a gap at the lower right
-    ring_r = size * 0.245
-    thickness = int(size * 0.030)
-    ring = np.zeros((size, size, 4), np.float32)
-    cv2.ellipse(ring, (int(cx), int(cy)), (int(ring_r), int(ring_r)), 0, 18, 358,
-                (255, 214, 60, 255), thickness, cv2.LINE_AA)
-    canvas = over(canvas, ring)
+    # inner vignette: darker towards the bottom corners
+    vig = np.clip(1.0 - (((xx - cx) ** 2 + (yy - cy) ** 2) / (size * 0.62) ** 2), 0, 1) ** 2
+    tile = tile * (0.86 + 0.14 * vig[..., None])
 
-    # inner white ring
-    inner = np.zeros((size, size, 4), np.float32)
-    cv2.circle(inner, (int(cx), int(cy)), int(size * 0.105), (255, 255, 255, 240),
-               int(size * 0.021), cv2.LINE_AA)
-    canvas = over(canvas, inner)
+    canvas = alpha_over(canvas, np.clip(tile, 0, 255), mask)
 
-    # fingertip dot
-    canvas = over(canvas, radial(size, cx, cy, size * 0.055, (255, 255, 255), 1.0))
+    # soft cyan glow behind the mark
+    if not small:
+        gy, gx = np.mgrid[0:size, 0:size].astype(np.float32)
+        glow = np.clip(1.0 - np.sqrt((gx - cx) ** 2 + (gy - cy) ** 2) / (size * 0.34), 0, 1) ** 2.2
+        canvas = alpha_over(canvas, np.array([255, 205, 70], np.float32), glow * 42)
 
-    # three motion arcs to the left
-    for i, r in enumerate((0.335, 0.395, 0.455)):
-        arc = np.zeros((size, size, 4), np.float32)
-        cv2.ellipse(arc, (int(cx), int(cy)), (int(size * r), int(size * r)), 0,
-                    150, 205, (255, 200, 80, int(150 - i * 35)),
-                    max(3, int(size * 0.016)), cv2.LINE_AA)
-        canvas = over(canvas, arc)
+    # reticle: four corner brackets
+    r = size * (0.245 if small else 0.255)
+    arm = size * (0.110 if small else 0.092)
+    w = max(2, int(size * (0.036 if small else 0.030)))
+    ink = (248, 250, 253, 255)
+    layer = np.zeros((size, size, 4), np.float32)
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            x0, y0 = cx + sx * r, cy + sy * r
+            cv2.line(layer, (int(x0), int(y0)), (int(x0 - sx * arm), int(y0)),
+                     ink, w, cv2.LINE_AA)
+            cv2.line(layer, (int(x0), int(y0)), (int(x0), int(y0 - sy * arm)),
+                     ink, w, cv2.LINE_AA)
+            rr = max(1, w // 2)
+            cv2.circle(layer, (int(x0 - sx * arm), int(y0)), rr, ink, -1, cv2.LINE_AA)
+            cv2.circle(layer, (int(x0), int(y0 - sy * arm)), rr, ink, -1, cv2.LINE_AA)
+    canvas = alpha_over(canvas, layer[..., :3], layer[..., 3])
+
+    # centre dot: the fingertip
+    dot = np.zeros((size, size, 4), np.float32)
+    cv2.circle(dot, (int(cx), int(cy)), int(size * (0.075 if small else 0.056)),
+               (255, 226, 92, 255), -1, cv2.LINE_AA)
+    canvas = alpha_over(canvas, dot[..., :3], dot[..., 3])
+
+    core = np.zeros((size, size, 4), np.float32)
+    cv2.circle(core, (int(cx), int(cy)), int(size * (0.034 if small else 0.026)),
+               (255, 255, 255, 255), -1, cv2.LINE_AA)
+    canvas = alpha_over(canvas, core[..., :3], core[..., 3])
 
     return np.clip(canvas, 0, 255).astype(np.uint8)
 
 
+def render(px: int, small: bool = False):
+    big = draw(px * SS, small=small)
+    return cv2.resize(big, (px, px), interpolation=cv2.INTER_AREA)
+
+
 def main() -> int:
-    big = draw(S * SS)
-    icon = cv2.resize(big, (S, S), interpolation=cv2.INTER_AREA)
     png = ROOT / "icon_1024.png"
-    cv2.imwrite(str(png), icon)
+    cv2.imwrite(str(png), render(S))
 
     iconset = ROOT / "build" / "AirTouch.iconset"
     iconset.mkdir(parents=True, exist_ok=True)
@@ -103,10 +119,8 @@ def main() -> int:
         for scale in (1, 2):
             px = size * scale
             name = f"icon_{size}x{size}" + ("@2x" if scale == 2 else "") + ".png"
-            subprocess.run(
-                ["sips", "-z", str(px), str(px), str(png), "--out", str(iconset / name)],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+            # small sizes get a chunkier mark so they survive downscaling
+            cv2.imwrite(str(iconset / name), render(px, small=px <= 64))
     subprocess.run(
         ["iconutil", "-c", "icns", str(iconset), "-o", str(ROOT / "icon.icns")],
         check=True,

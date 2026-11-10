@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from airtouch.core import Hand  # noqa: E402
 from airtouch.gestures import GestureEngine  # noqa: E402
-from airtouch.smooth import GridSmoother  # noqa: E402
+from airtouch.smooth import PointerFilter  # noqa: E402
 
 FAILS = []
 
@@ -136,25 +136,124 @@ check("one-frame posture flicker is ignored", kinds(acts) == [], str(kinds(acts)
 check("scroll mode freezes the pointer", GestureEngine().cursor_active is False)
 
 # ------------------------------------------------------------------ smoother
-sm = GridSmoother(alpha=0.3, cell=8.0)
-sm.update(100, 100)
+pf = PointerFilter(min_cutoff=0.51, beta=0.02, cell=6.0)
+pf.update(100, 100, 0.0)
 rnd = np.random.RandomState(7)
 raw = [(100 + rnd.normal(0, 6), 100 + rnd.normal(0, 6)) for _ in range(120)]
-outs = [sm.update(*p) for p in raw]
+outs = [pf.update(x, y, (i + 1) / 30.0) for i, (x, y) in enumerate(raw)]
 xs = {round(o[0]) for o in outs}
 spread_raw = max(p[0] for p in raw) - min(p[0] for p in raw)
 spread_out = max(o[0] for o in outs) - min(o[0] for o in outs)
 check("shake collapses to a few cells", len(xs) <= 4, f"{sorted(xs)}")
 check("shake is damped hard", spread_out <= spread_raw / 2,
       f"raw {spread_raw:.0f}px -> {spread_out:.0f}px")
-check("output is on the grid", all(abs(o[0] / 8 - round(o[0] / 8)) < 1e-9 for o in outs))
+check("output is on the grid", all(abs(o[0] / 6 - round(o[0] / 6)) < 1e-9 for o in outs))
 
-sm2 = GridSmoother(alpha=0.3, cell=8.0)
-sm2.update(0, 0)
-for i in range(60):
-    x, y = sm2.update(600, 0)
-check("large moves still track", x > 500, f"x={x}")
-check("steps are whole cells", abs((x / 8) - round(x / 8)) < 1e-9, f"x={x}")
+# One Euro must not lag behind fast motion (that is the whole point)
+pf2 = PointerFilter(min_cutoff=0.51, beta=0.02, cell=1.0)
+pf2.update(0, 0, 0.0)
+for i in range(1, 31):
+    x, y = pf2.update(30.0 * i, 0, i / 30.0)
+check("fast motion is tracked without lag", x > 880, f"x={x:.0f} of 900")
+check("slow motion still smooths", abs(x - 900) < 40, f"x={x:.0f}")
+
+# ------------------------------------------------------------------ calibration
+from airtouch.main import Controller  # noqa: E402
+
+
+class _Args:
+    dry_run = True
+    demo = False
+    no_preview = True
+    mode = "absolute"
+    gain = 2.2
+    calib = None
+    calibrate = False
+    camera = 0
+    no_motion_gate = True
+
+
+ctl = Controller(_Args())
+ctl.start_calibration()
+frame = np.zeros((720, 1280, 3), np.uint8)
+still = Hand((600, 300), (600 / 1280, 300 / 720), 0.2, 0.9, True,
+             np.zeros((21, 2), np.float32), posture="point")
+t = 0.0
+for _ in range(35):
+    t += 1 / 30.0
+    ctl._calibration_step(frame, still, [], t)
+check("holding still records a calibration point", len(ctl.calib_points) == 1,
+      f"{len(ctl.calib_points)} points")
+check("progress restarts for the next target", ctl.state.calib_progress < 0.5,
+      f"{ctl.state.calib_progress:.2f}")
+
+before = len(ctl.calib_points)
+t2 = t
+for i in range(35):
+    t2 += 1 / 30.0
+    shaky = Hand((600 + (i % 2) * 90, 300), ((600 + (i % 2) * 90) / 1280, 300 / 720),
+                 0.2, 0.9, True, np.zeros((21, 2), np.float32), posture="point")
+    ctl._calibration_step(frame, shaky, [], t2)
+check("a moving finger records nothing", len(ctl.calib_points) == before,
+      f"{len(ctl.calib_points)} points")
+
+# --------------------------------------------- integration: fist is not "pointing"
+ctl2 = Controller(_Args())
+ctl2.state.control = "relative"
+ctl2.state.pointing = False          # a fist never counts as pointing
+ctl2.state.show_cursor = False
+ctl2.gestures_enabled = True
+recorded = []
+
+
+class _Recorder:
+    def screenshot_to_clipboard(self):
+        recorded.append("screenshot")
+        return True
+
+    def paste(self):
+        recorded.append("paste")
+
+    def scroll(self, v):
+        recorded.append("scroll")
+
+    def switch_window(self, v):
+        recorded.append("switch")
+
+    def mission_control(self):
+        recorded.append("mission")
+
+    def right_down(self, x, y):
+        recorded.append("rdown")
+
+    def right_up(self, x, y):
+        recorded.append("rup")
+
+    def right_drag(self, x, y):
+        recorded.append("rdrag")
+
+
+ctl2.actions_ = _Recorder()
+fist = Hand((640, 360), (0.5, 0.5), 0.2, 0.9, False,
+            np.zeros((21, 2), np.float32), posture="fist", wrist=(0.5, 0.8))
+frame2 = np.zeros((720, 1280, 3), np.uint8)
+tt = 0.0
+for _ in range(40):
+    tt += 1 / 30.0
+    ctl2._live_step(frame2, fist, [], tt)
+check("a fist still reaches the gesture engine", "screenshot" in recorded, str(recorded))
+
+# hand up at face height must not trigger gestures
+ctl3 = Controller(_Args())
+ctl3.state.control = "relative"
+ind = Hand((640, 200), (0.5, 0.28), 0.2, 0.9, False,
+           np.zeros((21, 2), np.float32), posture="fist", wrist=(0.5, 0.20))
+tt = 0.0
+for _ in range(40):
+    tt += 1 / 30.0
+    ctl3._live_step(frame2, ind, [], tt)
+check("face-height hand is ignored for gestures", ctl3.state.posture in ("none", ""),
+      ctl3.state.posture)
 
 print()
 if FAILS:

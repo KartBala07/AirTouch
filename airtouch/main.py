@@ -24,7 +24,7 @@ from . import core, paths, updater
 from .actions import SystemActions
 from .config import Config
 from .gestures import Action, GestureEngine
-from .smooth import GridSmoother
+from .smooth import PointerFilter
 from .core import (
     Calibration,
     Camera,
@@ -35,9 +35,11 @@ from .core import (
     TapDetector,
     build_preview,
     calibration_grid,
+    calibration_grid5,
 )
 
-CALIB_INSET = 0.12
+CALIB_INSET = 0.07
+CALIB_HOLD = 0.9   # seconds the finger must rest on a target
 
 
 def request_camera_access(timeout: float = 10.0):
@@ -86,6 +88,8 @@ class State:
         self.pointing = False
         self.posture = "none"
         self.right_drag = False
+        self.rejected = ""
+        self.gestures_enabled = True
         self.overlays_collapsed = False
         self.paused = False
         self.quit = False
@@ -122,7 +126,8 @@ class State:
         self.preview_caption = "camera"
 
         # calibration
-        self.calib_total = 9
+        self.calib_total = 5
+        self.calib_progress = 0.0
         self.calib_index = 0
         self.calib_target = (0.5, 0.5)
         self.calib_hint = ""
@@ -158,14 +163,19 @@ class Controller:
         self.gate: Optional[MotionGate] = None if args.no_motion_gate else MotionGate()
         self.gestures = GestureEngine()
         self.actions_ = SystemActions(dry_run=args.dry_run)
-        self.smoother = GridSmoother(
-            alpha=float(self.config.get("smoothing")),
+        self.smoother = PointerFilter(
+            min_cutoff=0.15 + 1.2 * float(self.config.get("smoothing")),
+            beta=0.02,
             cell=float(self.config.get("grid_cell")),
         )
+        self.min_hand_scale = float(self.config.get("min_hand_scale"))
+        self.gesture_wrist_y = float(self.config.get("gesture_wrist_y"))
+        self.gestures_enabled = bool(self.config.get("gestures"))
+        self._calib_buffer: List[Tuple[float, float, float]] = []
         self._right_down = False
         self._last_hand_t = 0.0
         self._last_track_t = 0.0
-        self.grid = calibration_grid(CALIB_INSET)
+        self.grid = calibration_grid5(CALIB_INSET)
         self.calib_points: List[Tuple[float, float]] = []
         self._smooth: Optional[Tuple[float, float]] = None
         self._cursor: Optional[Tuple[float, float]] = None
@@ -307,6 +317,8 @@ class Controller:
     # ------------------------------------------------------------------
     def start_calibration(self) -> None:
         self.calib_points = []
+        self._calib_buffer = []
+        self.state.calib_progress = 0.0
         self.state.calib_map = []
         self.calib = None
         self.state.has_calib = False
@@ -315,8 +327,9 @@ class Controller:
         self.state.calib_done = False
         self.state.calib_error = ""
         self.state.calib_hint = (
-            "Reach your hand out toward the screen (a hand-width from the glass), aim, then poke."
+            "Hold your index fingertip on the ring until it fills - no tapping needed."
         )
+        self.state.calib_total = len(self.grid)
         self.state.calib_target = tuple(self.grid[0])
         self.state.calib_dirty = True
         self._calib_fit_at = 0.0
@@ -357,44 +370,26 @@ class Controller:
               f"({calib.inliers}/9 inliers)")
 
     # ------------------------------------------------------------------
-    def _record_calib_point(self, hand: Hand) -> None:
+    def _record_calib_point(self, x: float, y: float) -> None:
         if self.state.calib_done:
             return
-        self.calib_points.append(hand.tip_px)
-        w = self.cam.size[0] if self.cam is not None else 1280.0
-        h = self.cam.size[1] if self.cam is not None else 720.0
-        self.state.calib_map = list(self.state.calib_map) + [
-            (hand.tip_px[0] / w, hand.tip_px[1] / h)
-        ]
+        self.calib_points.append((x, y))
+        cw, ch = self.cam.size if self.cam is not None else (1280, 720)
+        self.state.calib_map = list(self.state.calib_map) + [(x / cw, y / ch)]
         self.state.calib_index = len(self.calib_points)
         self.state.calib_dirty = True
-        print(f"[airtouch] calib point {len(self.calib_points)}/9 at {hand.tip_px}")
-        if len(self.calib_points) >= 9:
+        print(f"[airtouch] calib point {len(self.calib_points)}/{len(self.grid)} at ({x:.0f},{y:.0f})")
+        if len(self.calib_points) >= len(self.grid):
             self._finish_calibration()
         else:
             self.state.calib_target = tuple(self.grid[len(self.calib_points)])
-            spread = self._calib_spread()
-            if len(self.calib_points) >= 4 and spread < 0.16:
-                self.state.calib_hint = (
-                    "your taps are landing in the same spot - reach further across the screen"
-                )
-            else:
-                self.state.calib_hint = (
-                    "good - next ring" if len(self.calib_points) % 3 else "next row"
-                )
+            self.state.calib_hint = "now hold on the next ring"
 
-    def _calib_spread(self) -> float:
-        if len(self.state.calib_map) < 2:
-            return 0.0
-        pts = np.asarray(self.state.calib_map, dtype=np.float32)
-        return float(
-            max(pts[:, 0].max() - pts[:, 0].min(), pts[:, 1].max() - pts[:, 1].min())
-        )
-
-    # ------------------------------------------------------------------
     def _calibration_step(self, frame, hand: Optional[Hand], taps, now: float) -> None:
         self.state.calib_tip = None
-        if hand is not None and len(self.calib_points) >= 6 and not self.state.calib_done:
+
+        # provisional mapping so the "you" dot appears as soon as it can
+        if hand is not None and len(self.calib_points) >= 4 and not self.state.calib_done:
             try:
                 tmp = Calibration.fit(
                     self.grid[:len(self.calib_points)],
@@ -413,41 +408,52 @@ class Controller:
                 self.state.mode = "live"
                 self.state.calib_done = False
                 self.state.tip_screen = None
-                self._smooth = None
+                self.smoother.reset()
             return
 
         if hand is None:
-            self.state.calib_hint = "no hand - move your hand into the camera's view"
+            self._calib_buffer = []
+            self.state.calib_progress = 0.0
+            self.state.calib_hint = "no hand - hold your fingertip over the ring"
             return
 
-        register = self.state.calib_register
-        self.state.calib_register = False
+        tip = hand.tip_px
 
-        if not (taps or register):
-            if now - self._calib_last_tap > 7.0:
-                self.state.calib_hint = (
-                    "tap not detected - push your finger toward the screen, pinch, or press N"
-                )
-            else:
-                self.state.calib_hint = "aim, then tap toward the screen"
+        # mouse click / N still works as a manual override
+        if self.state.calib_register:
+            self.state.calib_register = False
+            self._calib_buffer = []
+            self.state.calib_progress = 0.0
+            self._record_calib_point(tip[0], tip[1])
             return
 
-        # one physical poke must never advance two rings
-        if self.calib_points and now - self._calib_recorded_at < 0.45:
+        if not hand.index_extended:
+            self._calib_buffer = []
+            self.state.calib_progress = 0.0
+            self.state.calib_hint = "extend your index finger and hold it on the ring"
             return
-        # ... and the hand has to actually travel to the next ring
-        if taps and self.calib_points:
-            lx, ly = self.calib_points[-1]
-            if math.hypot(hand.tip_px[0] - lx, hand.tip_px[1] - ly) < 60.0:
-                self.state.calib_hint = "move your finger to the new ring before tapping"
+
+        buf = self._calib_buffer
+        if buf:
+            mx = float(np.median([b[0] for b in buf]))
+            my = float(np.median([b[1] for b in buf]))
+            if math.hypot(tip[0] - mx, tip[1] - my) > 55.0:
+                self._calib_buffer = [(tip[0], tip[1], now)]
+                self.state.calib_progress = 0.0
+                self.state.calib_hint = "hold still on the ring"
                 return
-        if register and not taps and not hand.index_extended:
-            self.state.calib_hint = "extend your index finger so the tip is visible, then press N"
-            return
 
-        self._calib_last_tap = now
-        self._calib_recorded_at = now
-        self._record_calib_point(hand)
+        buf.append((tip[0], tip[1], now))
+        span = now - buf[0][2]
+        self.state.calib_progress = min(1.0, span / CALIB_HOLD)
+        self.state.calib_hint = "hold still..." if span < CALIB_HOLD else "got it"
+
+        if span >= CALIB_HOLD:
+            xs = np.asarray([b[0] for b in buf], dtype=np.float32)
+            ys = np.asarray([b[1] for b in buf], dtype=np.float32)
+            self._calib_buffer = []
+            self.state.calib_progress = 0.0
+            self._record_calib_point(float(np.median(xs)), float(np.median(ys)))
 
     # ------------------------------------------------------------------
     def _process_tap(self, tap, frame, hand: Hand, now: float) -> None:
@@ -552,7 +558,7 @@ class Controller:
         cx = min(max(cx + dx * self._screen[0] * self.gain, 0.0), self._screen[0] - 1)
         cy = min(max(cy + dy * self._screen[1] * self.gain, 0.0), self._screen[1] - 1)
         self._cursor = (cx, cy)
-        sx, sy = self.smoother.update(cx, cy)
+        sx, sy = self.smoother.update(cx, cy, now)
         self.state.tip_screen = (sx, sy)
         if self._right_down:
             self.actions_.right_drag(sx, sy)
@@ -570,13 +576,20 @@ class Controller:
             self.state.zone = None
             return
 
-        for action in self.gestures.update(hand, now):
+        gestures_allowed = self.gestures_enabled and hand.wrist[1] >= self.gesture_wrist_y
+        for action in self.gestures.update(hand, now, True, gestures_allowed):
             self._run_action(action, frame, hand, now)
         self.state.posture = self.gestures.mode
         self.state.right_drag = self.gestures.right_active
 
         # scroll / screenshot / swipe modes freeze the pointer
         if not self.gestures.cursor_active:
+            self._last_tip_norm = hand.tip
+            return
+
+        # the pointer and the poke-click need a pointing hand; the gesture
+        # actions above do not
+        if not self.state.pointing:
             self._last_tip_norm = hand.tip
             return
 
@@ -605,7 +618,7 @@ class Controller:
         if self._smooth is None or math.hypot(sx - self._smooth[0], sy - self._smooth[1]) > 260:
             self._smooth = (sx, sy)
             self.smoother.reset()
-        px_, py_ = self.smoother.update(sx, sy)
+        px_, py_ = self.smoother.update(sx, sy, now)
         self._smooth = (px_, py_)
         self.state.tip_screen = self._smooth
         if self._right_down:
@@ -802,9 +815,25 @@ class Controller:
                 taps = []
                 if hand is not None:
                     self._last_hand_t = now
-                    self.state.pointing = bool(hand.pointing) or not self.require_pointing
-                    if self.state.pointing:
+                    # ignore hands that are far away, half out of frame, or at
+                    # face height - that is where false positives come from
+                    if hand.scale < self.min_hand_scale:
+                        self.state.rejected = "too far"
+                        hand_ok = False
+                    elif not (0.02 <= hand.tip[0] <= 0.98 and 0.03 <= hand.tip[1] <= 0.99):
+                        self.state.rejected = "edge of frame"
+                        hand_ok = False
+                    else:
+                        self.state.rejected = ""
+                        hand_ok = True
+                    self.state.pointing = hand_ok and (
+                        bool(hand.pointing) or not self.require_pointing
+                    )
+                    # a fist or a flat palm is not "pointing", but the gesture
+                    # engine still needs to see it
+                    if hand_ok:
                         active = hand
+                    if self.state.pointing:
                         taps = self.detector.update(hand, now)
                         self.state.ratio = hand.scale / max(
                             self.detector.baseline or hand.scale, 1e-9
@@ -814,6 +843,7 @@ class Controller:
                         self.state.ratio = 1.0
                 else:
                     self.state.pointing = False
+                    self.state.rejected = ""
                     self.detector.reset()
                     self.state.ratio = 1.0
 
@@ -1087,13 +1117,14 @@ def shot(args) -> int:
 
     cv = U.CalibrationFullView.alloc().initWithFrame_(U.NSMakeRect(0, 0, sw, sh))
     cv.state = st
-    cv.index = 4
-    cv.total = 9
+    cv.index = 2
+    cv.total = 5
     cv.target = (0.5, 0.5)
     cv.hint = "aim, then tap toward the screen"
     st.calib_tip = (0.44, 0.42)
     st.calib_map = [(0.30, 0.26), (0.50, 0.23), (0.70, 0.25), (0.31, 0.45), (0.52, 0.43)]
-    st.calib_hint = "aim, then tap toward the screen"
+    st.calib_hint = "hold still..."
+    st.calib_progress = 0.62
     cv.setNeedsDisplay_(True)
     U.render_view(cv, out / "calibration.png", backdrop=backdrop)
 

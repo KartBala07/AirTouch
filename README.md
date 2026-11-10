@@ -1,4 +1,4 @@
-# AirTouch (beta 0.5)
+# AirTouch (beta 0.6)
 
 Turn the MacBook camera into a touchscreen: the app tracks your index fingertip and
 clicks wherever you point or poke. Tap twice quickly to select (double-click).
@@ -75,6 +75,12 @@ Settings live in `~/Library/Application Support/AirTouch/config.json`; the log i
 | whole-hand swipe left / right | previous / next window |
 | whole-hand swipe up | Mission Control |
 
+Guards against false positives: hands smaller than `min_hand_scale` (far away),
+fingertips at the very edge of the frame, and - for the big gestures - hands whose
+wrist sits above `gesture_wrist_y` (i.e. up at face height) are ignored, and the menu
+shows *Hand: ignored (too far)* when that happens. **Gestures** in the menu (⌘G)
+switches the fist/palm/scroll set off entirely while keeping the pointer and clicks.
+
 The pointer only follows the hand while you are **pointing**. Scroll, fist and swipe
 postures freeze it, so gesturing never drags the cursor across the screen. Every
 posture has to hold for 100 ms before it takes over, so a single noisy frame cannot
@@ -82,10 +88,14 @@ fire a screenshot or a swipe.
 
 ## Smoothing and the grid
 
-Camera tracking is jittery, so the pointer goes through two stages: an exponential
-filter (Settings → **Smoothing**, default 0.30) and then a snap to an **8 px grid**
-with a hysteresis band, so the cursor moves in a few clean steps instead of vibrating
-one pixel at a time. `grid_cell` in `config.json` sets the step size.
+Camera tracking is jittery, so the pointer runs through a
+[One Euro filter](https://github.com/casiez/OneEuroFilter) (Casiez, Roussel & Vogel,
+CHI 2012): heavy smoothing when the hand is still, almost none when it moves fast, so
+it is steady *and* responsive instead of one at the expense of the other. The result
+then snaps to a 6 px grid with a hysteresis band. Settings → **Smoothing** (0.30)
+trades steadiness for snappiness; `grid_cell` sets the step size.
+
+Old configs are migrated automatically (v2): 720p capture, One Euro, 6 px grid.
 
 ## Two control modes
 
@@ -109,6 +119,11 @@ rather than silently mis-clicking.
 ```
 
 ## Calibrating absolute mode (optional)
+
+Nine pokes are gone. There are **five rings** - four corners and the centre - and you
+just **rest your fingertip on each one for 0.9 s** while an arc fills around it. No
+tapping, no timing, so the old "only 4 of 9 taps agreed" failure cannot happen; the
+recorded point is the median of ~30 samples taken while your finger was still.
 
 The app shows 9 rings, one at a time. **Reach your arm out toward the screen** (fingertip
 roughly a hand-width from the glass) - this is the posture the calibration assumes, and

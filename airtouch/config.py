@@ -8,10 +8,10 @@ from typing import Any, Dict, Optional
 
 from . import paths
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 DEFAULTS: Dict[str, Any] = {
-    "config_version": 2,
+    "config_version": 3,
     "mode": "auto",            # auto | relative | absolute
     "gain": 2.2,               # air-trackpad cursor speed
     "push_threshold": 1.050,   # hand-size growth that counts as a poke
@@ -24,10 +24,12 @@ DEFAULTS: Dict[str, Any] = {
     "camera_index": 0,
     "capture_width": 1280,     # 720p: sharper landmarks and a 16:9 preview
     "capture_height": 720,
-    "process_fps": 20.0,       # inference cap (frames above this are skipped)
+    "process_fps": 30.0,       # inference cap (frames above this are skipped)
     "show_cursor": True,       # pointer ring overlay
-    "smoothing": 0.30,         # pointer filter strength (lower = smoother)
-    "grid_cell": 8.0,          # pointer snaps to this pixel grid
+    "smoothing": 0.30,         # One Euro cutoff (lower = steadier, higher = snappier)
+    "grid_cell": 6.0,          # pointer snaps to this pixel grid
+    "min_hand_scale": 0.085,   # ignore tiny/far hands
+    "gesture_wrist_y": 0.42,   # gestures need the wrist below this line
     "gestures": True,          # fist/palm/two-finger gestures
     "check_updates": True,     # look for a newer release at launch
     "last_update_check": 0.0,
@@ -37,7 +39,7 @@ DEFAULTS: Dict[str, Any] = {
 }
 
 NUMBERS = ("gain", "push_threshold", "pinch_threshold", "process_fps", "last_update_check",
-           "smoothing", "grid_cell")
+           "smoothing", "grid_cell", "min_hand_scale", "gesture_wrist_y")
 INTS = ("camera_index", "capture_width", "capture_height")
 BOOLS = ("motion_gate", "show_preview", "show_hud", "show_cursor", "click_on_single",
          "dry_run", "require_pointing", "overlays_collapsed", "ax_prompted", "check_updates",
@@ -75,6 +77,18 @@ class Config:
             except (TypeError, ValueError):
                 pass
 
+        if version < 3:
+            # 0.6.0: One Euro filter at 30 fps, 6 px grid, gestures on
+            self.data.update({
+                "process_fps": 30.0,
+                "grid_cell": 6.0,
+                "smoothing": 0.30,
+                "gestures": True,
+                "min_hand_scale": 0.085,
+                "gesture_wrist_y": 0.42,
+                "config_version": CONFIG_VERSION,
+            })
+            self.save()
         if version < 2:
             # 0.5.0 raised the capture to 720p and added grid smoothing; older
             # config files would otherwise pin everyone to the blurry defaults.
