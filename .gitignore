@@ -1,0 +1,15 @@
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+.DS_Store
+icon.icns
+icon_1024.png
+shots/
+*.dmg
+*.zip
+airtouch.log
+calibration.json
+config.json
+*.spec

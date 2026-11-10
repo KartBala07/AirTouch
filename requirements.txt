@@ -1,0 +1,11 @@
+mediapipe==1.2.2
+numpy==2.0.2
+opencv-python-headless==5.0.0.93
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+pyobjc-core==11.1
+pyobjc-framework-AVFoundation==11.1
+pyobjc-framework-Cocoa==11.1
+pyobjc-framework-CoreAudio==11.1
+pyobjc-framework-CoreMedia==11.1
+pyobjc-framework-Quartz==11.1
