@@ -524,6 +524,33 @@ class Controller:
             self.clicker.click(sx, sy, double=double)
         print(f"[airtouch] {self.state.last_event} [{tap.kind}]")
 
+    def _accessibility_alert(self) -> None:
+        """Say it plainly: without this permission nothing we send arrives."""
+        try:
+            import subprocess
+
+            from AppKit import NSAlert, NSApplication
+
+            app = NSApplication.sharedApplication()
+            app.activateIgnoringOtherApps_(True)
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("AirTouch needs Accessibility to click for you")
+            alert.setInformativeText_(
+                "macOS silently drops every click, scroll and key AirTouch sends until "
+                "this is enabled - the pointer moves, nothing else happens.\n\n"
+                "Privacy & Security > Accessibility > switch AirTouch on.\n"
+                "Then use Test click in the menu bar to confirm."
+            )
+            alert.addButtonWithTitle_("Open System Settings")
+            alert.addButtonWithTitle_("Later")
+            if alert.runModal() == 1000:
+                subprocess.run(
+                    ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"],
+                    check=False,
+                )
+        except Exception as exc:
+            print(f"[airtouch] accessibility alert failed: {exc}")
+
     def test_click(self) -> str:
         """Move the cursor and read it back - proof that clicks reach macOS."""
         ok, msg = self.actions_.click_test()
